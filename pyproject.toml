@@ -1,27 +1,32 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "SilKit_py_scenario_runner"
 version = "0.1.0"
-description = "ECU-independent scenario scheduling for SIL Kit Python participants"
+description = "ECU-independent scenario scheduling and automated testing for SIL Kit Python participants"
 readme = "README.md"
-requires-python = ">=3.10"
-keywords = ["silkit", "sil", "simulation", "testing", "can"]
-dependencies = [
-  "SilKit_py>=1.0.3",
+requires-python = ">=3.12,<3.15"
+license = "MIT"
+license-files = ["LICENSE"]
+
+keywords = [
+    "silkit",
+    "simulation",
+    "automotive",
+    "pytest",
+    "scenario-runner",
 ]
+
+dependencies = [
+    "SilKit_py>=1.0.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/JannisRln/SilKit_py_scenario_runner"
+Repository = "https://github.com/JannisRln/SilKit_py_scenario_runner"
+Issues = "https://github.com/JannisRln/SilKit_py_scenario_runner/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-  "integration: requires a live SIL Kit registry, system controller, and peer participant",
-]
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["silkit_runner*"]
