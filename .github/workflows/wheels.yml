@@ -1,0 +1,160 @@
+
+name: Build and Publish to PyPI
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install --no-deps -e .
+
+      - name: Run unit tests
+        run: python -m pytest tests -q
+
+  build:
+    name: Build SDist and Wheel
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Check package name and release version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+
+          with open("pyproject.toml", "rb") as f:
+              project = tomllib.load(f)["project"]
+
+          normalized = re.sub(
+              r"[-_.]+", "-", project["name"]
+          ).lower()
+
+          assert normalized == "silkit-py-scenario-runner", (
+              f"PyPI project name mismatch: {project['name']}"
+          )
+
+          if os.environ.get("GITHUB_EVENT_NAME") == "release":
+              expected = f"v{project['version']}"
+              assert os.environ["GITHUB_REF_NAME"] == expected, (
+                  f"Release tag must be {expected}"
+              )
+          PY
+
+      - name: Install packaging tools
+        run: python -m pip install --upgrade build twine
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Check distributions
+        run: python -m twine check dist/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v5
+        with:
+          name: pypi-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  test_distribution:
+    name: Test Distributions (${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      # Test installed artifacts without source checkout.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: pypi-distributions
+          path: dist
+
+      - name: Install SDist
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps dist/*.tar.gz
+
+      - name: Verify SDist
+        run: >-
+          python -c "from importlib.metadata import distribution;
+          d=distribution('SilKit_py_scenario_runner');
+          assert any(str(f).startswith('silkit_runner/') for f in (d.files or []));
+          print('SDist installed:', d.version)"
+
+      - name: Install Wheel
+        shell: bash
+        run: |
+          python -m pip uninstall -y SilKit_py_scenario_runner
+          python -m pip install --no-deps dist/*.whl
+
+      - name: Verify Wheel
+        run: >-
+          python -c "from importlib.metadata import distribution;
+          d=distribution('SilKit_py_scenario_runner');
+          assert any(str(f).startswith('silkit_runner/') for f in (d.files or []));
+          print('Wheel installed:', d.version)"
+
+  publish:
+    name: Publish to PyPI
+    needs: [test, build, test_distribution]
+
+    if: >-
+      github.event_name == 'release' &&
+      github.event.action == 'published'
+
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: pypi-distributions
+          path: dist
+
+      - name: Publish SDist and Wheel
+        uses: pypa/gh-action-pypi-publish@release/v1
