@@ -28,4 +28,4 @@ __all__ = [
     "uds_rdbi",
     "uds_wdbi",
 ]
-__version__ = "0.1.0"
+__version__ = "0.1.1"

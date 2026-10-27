@@ -371,3 +371,14 @@ def test_assertion_failure_prevents_following_actions(scenario):
     tick(scenario, 10)
     assert signal.writes == []
     assert scenario.lifecycle.stopped == "Assertion failed"
+
+
+def test_unexpected_exception_in_step_stops_and_is_rethrown_by_run(scenario):
+    def broken():
+        raise ValueError("boom")
+
+    scenario.at(10).do(lambda time_ms: broken())
+    tick(scenario, 10)
+    assert scenario.lifecycle.stopped == "Scenario error"
+    with pytest.raises(AssertionError, match=r"ValueError in scenario step at t=10ms: boom"):
+        scenario.run()

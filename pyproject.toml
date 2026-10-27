@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "SilKit_py_scenario_runner"
-version = "0.1.0"
+version = "0.1.1"
 description = "ECU-independent scenario scheduling and automated testing for SIL Kit Python participants"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"

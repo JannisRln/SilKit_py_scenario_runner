@@ -398,6 +398,12 @@ class Scenario:
                 self._failure = error
                 self.lifecycle.stop("Assertion failed")
                 return
+            except Exception as error:
+                # SIL Kit swallows exceptions raised in the step handler, which would leave run() hanging.
+                self._failure = AssertionError(f"{type(error).__name__} in scenario step at t={self._now_ms}ms: {error}")
+                self._failure.__cause__ = error
+                self.lifecycle.stop("Scenario error")
+                return
 
             finished = (
                 (isinstance(action, OneShotAction) and action.executed)

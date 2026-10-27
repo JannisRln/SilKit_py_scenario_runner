@@ -4,7 +4,7 @@ An **ECU-independent Python framework** for scheduling SIL Kit simulations, exch
 
 Built on [SilKit_py](https://github.com/JannisRln/SilKit_py), the Python bindings for [Vector SIL Kit](https://github.com/vectorgrp/sil-kit). This project provides a higher-level testing layer; it is not a replacement for the underlying SIL Kit API.
 
-> **Project status:** Early release (v0.1.0). The runner API and its integration-test setup may evolve.
+> **Project status:** Early release (v0.1.1). The runner API and its integration-test setup may evolve.
 
 ## Features
 
