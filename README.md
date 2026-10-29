@@ -17,9 +17,13 @@ Built on [SilKit_py](https://github.com/JannisRln/SilKit_py), the Python binding
 - **pytest integration:** use ordinary fixtures and tests to describe scenarios.
 - **ECU independence:** no hardcoded ECU datasets, RPC names, C adapters, or machine-specific paths.
 
+## Documentation
+
+See the [documentation index](docs/index.md) for concepts, setup, and troubleshooting.
+
 ## Requirements
 
-- Python **3.10 or newer** as declared by the runner package. Use a Python version and operating system for which a compatible **SilKit_py** distribution is available on PyPI.
+- Python **3.12–3.14** as declared by the runner package metadata. Use a Python version and operating system for which a compatible **SilKit_py** distribution is available on PyPI.
 - `SilKit_py` (installed automatically as a package dependency).
 - For live integration tests: a running SIL Kit registry, an appropriate system controller for coordinated lifecycle execution, and the participant or system under test.
 
@@ -47,7 +51,7 @@ For test development, install the optional `pytest` dependencies:
 python -m pip install "SilKit_py_scenario_runner[test]"
 ```
 
-> **Package naming:** The commands above use the intended PyPI project name `SilKit_py_scenario_runner`. Before publishing, ensure that `[project].name` in `pyproject.toml` is exactly that name (or an equivalent normalized spelling). The Python import name remains `silkit_runner`.
+> **Package naming:** The commands above use the intended PyPI project name `SilKit_py_scenario_runner`. The Python import name remains `silkit_runner`.
 
 ## Quick start: a pytest scenario
 
