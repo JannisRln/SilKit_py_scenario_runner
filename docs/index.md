@@ -5,6 +5,7 @@ The scenario runner adds simulation-time scheduling, signals, assertions, and py
 ## Guides
 
 - [Getting started](getting-started.md) — install and run a scenario
+- [Fluent API reference](fluent-api.md) — all scheduling builders, actions and signal predicates
 - [Concepts](concepts.md) — simulation time, signals, and expectations
 - [Troubleshooting](troubleshooting.md) — lifecycle and integration problems
 - [README](../README.md) — feature overview, examples, and development commands
