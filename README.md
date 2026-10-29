@@ -19,7 +19,7 @@ Built on [SilKit_py](https://github.com/JannisRln/SilKit_py), the Python binding
 
 ## Documentation
 
-See the [documentation index](docs/index.md) for concepts, setup, and troubleshooting.
+See the [documentation index](docs/index.md) for setup and troubleshooting, and the [Fluent API reference](docs/fluent-api.md) for all scheduling builders, actions, assertions, and predicates.
 
 ## Requirements
 
