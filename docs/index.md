@@ -1,13 +1,17 @@
-# SIL Kit Python Scenario Runner documentation
+# SIL Kit Python Scenario Runner
 
-The scenario runner adds simulation-time scheduling, signals, assertions, and pytest integration on top of [SilKit_py](https://github.com/JannisRln/SilKit_py).
+A Python framework for simulation-time scheduling, signal assertions, CAN/UDS helpers, and pytest integration, built on [SilKit_py](https://github.com/JannisRln/SilKit_py).
 
-## Guides
+The runner does not launch a SIL Kit registry, system controller, or other participants. Live integration tests require an externally configured simulation environment.
 
-- [Getting started](getting-started.md) — install and run a scenario
-- [Fluent API reference](fluent-api.md) — all scheduling builders, actions and signal predicates
-- [Concepts](concepts.md) — simulation time, signals, and expectations
-- [Troubleshooting](troubleshooting.md) — lifecycle and integration problems
-- [README](../README.md) — feature overview, examples, and development commands
+```{toctree}
+:maxdepth: 2
+:caption: Documentation
 
-The runner does not launch a registry, system controller, or peer participant.
+getting-started
+fluent-api
+concepts
+troubleshooting
+```
+
+For release and development instructions, see the [repository README](https://github.com/JannisRln/SilKit_py_scenario_runner#readme).
