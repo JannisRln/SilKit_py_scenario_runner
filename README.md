@@ -138,7 +138,9 @@ scenario = Scenario(
 controller = scenario.get_can_controller("CAN 1")
 ```
 
-Use `can_networks=()` for Pub/Sub-only tests. Network names must match those used by your SIL Kit participants.
+Use `can_networks=()` for Pub/Sub-only tests. Network names must match those used by your SIL Kit participants. For multiple CAN networks, register received signals with `scenario.can_signal(signal, network="CAN 1")` to distinguish identical CAN identifiers on different buses. For a single configured network, the network is inferred automatically.
+
+Periodic scheduling coalesces missed intervals: if simulation steps do not land exactly on the requested period, the action executes once at the next available step (not once per missed interval).
 
 ### Custom signal encoding
 
