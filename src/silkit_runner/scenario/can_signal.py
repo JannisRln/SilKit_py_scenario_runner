@@ -1,4 +1,7 @@
 from dataclasses import dataclass, field
+import logging
+
+logger = logging.getLogger(__name__)
 from typing import Any, Callable, Optional
 
 from .scenario_signal import SignalPredicate
@@ -84,16 +87,18 @@ class LoggedCanSignal(CanSignal):
 
 class CanSignalRegistry:
     def __init__(self, *, unhandled_policy: str = "warn"):
-        self._by_can_id: dict[int, list[CanSignal]] = {}
+        self._by_can_id: dict[tuple[str | None, int], list[CanSignal]] = {}
+        if unhandled_policy not in {"ignore", "log", "warn", "fail", "collect"}:
+            raise ValueError(f"Invalid unhandled_policy: {unhandled_policy}")
         self._unhandled_policy = unhandled_policy
         self._unhandled: list[tuple[int, bytes, int]] = []
 
-    def register(self, signal: CanSignal) -> CanSignal:
-        self._by_can_id.setdefault(signal.can_id, []).append(signal)
+    def register(self, signal: CanSignal, *, network: str | None = None) -> CanSignal:
+        self._by_can_id.setdefault((network, signal.can_id), []).append(signal)
         return signal
 
-    def dispatch(self, can_id: int, data: bytes, time_ms: int) -> None:
-        signals = self._by_can_id.get(can_id)
+    def dispatch(self, can_id: int, data: bytes, time_ms: int, *, network: str | None = None) -> None:
+        signals = self._by_can_id.get((network, can_id))
 
         if not signals:
             self._handle_unhandled(can_id, data, time_ms)
@@ -107,10 +112,10 @@ class CanSignalRegistry:
             return
 
         if self._unhandled_policy == "log":
-            print(f"[CAN] Unhandled frame 0x{can_id:X} @ {time_ms}ms - payload {data}")
+            logger.info(f"[CAN] Unhandled frame 0x{can_id:X} @ {time_ms}ms - payload {data}")
 
         elif self._unhandled_policy == "warn":
-            print(f"WARNING: Unhandled CAN frame 0x{can_id:X} @ {time_ms}ms - payload {data}")
+            logger.warning(f"Unhandled CAN frame 0x{can_id:X} @ {time_ms}ms - payload {data}")
 
         elif self._unhandled_policy == "fail":
             raise AssertionError(
