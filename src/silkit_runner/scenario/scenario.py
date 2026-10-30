@@ -3,6 +3,14 @@ from typing import Callable, Optional, Any, Sequence
 from abc import ABC, abstractmethod
 import SilKit_py as SilKit
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class ScenarioExecutionError(RuntimeError):
+    """Raised when an unexpected error occurs during a simulation step."""
+
 
 from .scenario_signal import SignalPredicate
 from .can_signal import CanSignal, CanSignalRegistry
@@ -227,7 +235,7 @@ class InvariantAction(Action):
             if self.severity == "fail":
                 raise AssertionError(msg)
             else:
-                print("WARNING:", msg)
+                logger.warning("%s", msg)
 
 @dataclass
 class EventuallyAction(Action):
@@ -329,7 +337,7 @@ class Scenario:
         self._now_ns = 0
         self._actions: list[Action] = []
         self._last_action: Action | None = None
-        self._failure: AssertionError | None = None
+        self._failure: Exception | None = None
         self._on_ready = on_communication_ready
         self._async_ready = async_communication_ready
         self._can_registry = CanSignalRegistry(unhandled_policy="ignore")
@@ -462,7 +470,7 @@ class Scenario:
                 return
             except Exception as error:
                 # SIL Kit swallows exceptions raised in the step handler, which would leave run() hanging.
-                self._failure = AssertionError(f"{type(error).__name__} in scenario step at t={self._now_ms}ms: {error}")
+                self._failure = ScenarioExecutionError(f"{type(error).__name__} in scenario step at t={self._now_ms}ms: {error}")
                 self._failure.__cause__ = error
                 self.lifecycle.stop("Scenario error")
                 return
@@ -482,10 +490,35 @@ class Scenario:
         if self._end_ms is not None and self._now_ms >= self._end_ms:
             self.lifecycle.stop("Simulation done")
 
-    def run(self):
-        asyncio.run(self.lifecycle.start_lifecycle()) # type: ignore
+    def run(self, *, timeout_s: float | None = None):
+        """Run the lifecycle, optionally bounding wall-clock execution time."""
+        if timeout_s is not None and timeout_s <= 0:
+            raise ValueError("timeout_s must be positive")
+
+        async def _run():
+            lifecycle = self.lifecycle.start_lifecycle()
+            if timeout_s is None:
+                await lifecycle
+            else:
+                await asyncio.wait_for(lifecycle, timeout=timeout_s)
+
+        try:
+            asyncio.run(_run())
+        except TimeoutError:
+            self.lifecycle.stop("Scenario timeout")
+            raise TimeoutError(f"Scenario lifecycle exceeded {timeout_s} seconds") from None
         if self._failure:
             raise self._failure
+
+    def close(self) -> None:
+        """Request a graceful lifecycle stop."""
+        self.lifecycle.stop("Scenario closed")
+
+    def __enter__(self) -> "Scenario":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
     def can_signal(self, signal: CanSignal, *, network: str | None = None) -> CanSignal:
         if network is None and len(self.can_controllers) == 1:
@@ -572,7 +605,7 @@ class _ScenarioEvery:
     def set(self, signal, value):
         return self.do(signal.set, value)
     
-    def ramp(self, signal, start, end, step):
+    def ramp(self, signal, start, end, step, *, stop_at_target: bool = False):
         action = RampAction(
             start_ms=self._start,
             period_ms=self._period,
@@ -580,6 +613,7 @@ class _ScenarioEvery:
             start_value=start,
             end_value=end,
             step=step,
+            stop_at_target=stop_at_target,
         )
         self._scenario._add_action(action)
         return self._scenario
