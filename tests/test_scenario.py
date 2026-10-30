@@ -279,10 +279,10 @@ def test_invariant_failures_are_rethrown_by_run(scenario):
         scenario.run()
 
 
-def test_invariant_warn_only_reports_without_stopping(scenario, capsys):
+def test_invariant_warn_only_reports_without_stopping(scenario, caplog):
     scenario.invariant(lambda: False, "warn message", severity="warn", start_ms=5, end_ms=10)
     tick(scenario, 0, 5, 10, 15)
-    output = capsys.readouterr().out
+    output = caplog.text
     assert "[t=5ms] Invariant violated: warn message" in output
     assert "[t=10ms] Invariant violated: warn message" in output
     assert "[t=0ms]" not in output
