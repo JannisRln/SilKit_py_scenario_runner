@@ -380,7 +380,7 @@ def test_unexpected_exception_in_step_stops_and_is_rethrown_by_run(scenario):
     scenario.at(10).do(lambda time_ms: broken())
     tick(scenario, 10)
     assert scenario.lifecycle.stopped == "Scenario error"
-    with pytest.raises(AssertionError, match=r"ValueError in scenario step at t=10ms: boom"):
+    with pytest.raises(RuntimeError, match=r"ValueError in scenario step at t=10ms: boom"):
         scenario.run()
 
 
