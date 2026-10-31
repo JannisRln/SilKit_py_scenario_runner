@@ -184,6 +184,80 @@ def bind_dbc_sender(
     )
 
 
+
+class DbcMessage:
+    """Mutable transmit-side DBC message with attribute-based signal access."""
+
+    def __init__(self, scenario: Any, definitions: type, *, network: str | None = None):
+        definitions_by_name = {
+            name: value for name, value in vars(definitions).items()
+            if isinstance(value, DbcSignalDefinition)
+        }
+        if not definitions_by_name:
+            raise ValueError("No DBC signals in message definition")
+        first = next(iter(definitions_by_name.values()))
+        self._sender = DbcSignalSender(scenario, first, network=network)
+        self._definitions = definitions_by_name
+        self._signals = {
+            name: DbcMutableSignal(self, definition)
+            for name, definition in definitions_by_name.items()
+        }
+
+    def __getattr__(self, name: str):
+        try:
+            return self._signals[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def send(self, *, time_ms: int = 0) -> None:
+        """Encode and transmit the entire current DBC message."""
+        data = self._sender.message.encode(self._sender._values)
+        self._sender.controller.send_frame(
+            can_id=self._sender.message.frame_id,
+            data=data,
+            flags=self._sender._flags,
+        )
+
+
+class DbcMutableSignal:
+    """Mutable value of one DBC signal in a message awaiting transmission."""
+
+    def __init__(self, message: DbcMessage, definition: DbcSignalDefinition):
+        self._message = message
+        self.definition = definition
+
+    def set(self, value: Any) -> None:
+        """Stage a physical signal value without transmitting."""
+        self._message._sender._values[self.definition.signal_name] = value
+
+    def get(self) -> Any:
+        """Return the currently staged physical signal value."""
+        return self._message._sender._values[self.definition.signal_name]
+
+
+class DbcVehicle:
+    """Bind generated message definitions as mutable transmit-side messages."""
+
+    def __init__(self, scenario: Any, vehicle: type, *, network: str | None = None):
+        self._messages = {
+            name: DbcMessage(scenario, definition, network=network)
+            for name, definition in vars(vehicle).items()
+            if isinstance(definition, type)
+            and any(isinstance(value, DbcSignalDefinition) for value in vars(definition).values())
+        }
+
+    def __getattr__(self, name: str):
+        try:
+            return self._messages[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+def bind_dbc_vehicle(scenario: Any, vehicle: type, *, network: str | None = None) -> DbcVehicle:
+    """Bind generated DBC messages for string-free signal staging and sending."""
+    return DbcVehicle(scenario, vehicle, network=network)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Command-line entry point for generating typed DBC definitions."""
     parser = argparse.ArgumentParser(description="Generate typed Python DBC signal definitions")
