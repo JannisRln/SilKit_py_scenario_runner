@@ -52,9 +52,13 @@ class SilKitSignal:
     subscriber: Optional[SilKit.IDataSubscriber] = None
 
     _value: Any = field(init=False)
+    _last_sent_value: Any = field(init=False)
+    _last_received_value: Any = field(init=False, default=None)
+    _received: bool = field(init=False, default=False)
 
     def __post_init__(self):
         self._value = self.initial
+        self._last_sent_value = self.initial
 
         spec = SilKit.PubSubSpec(self.topic, self.media_type)
 
@@ -74,14 +78,28 @@ class SilKitSignal:
         subscriber: SilKit.IDataSubscriber,
         event: SilKit.DataMessageEvent,
     ):
-        self._value = self.decoder(bytes(event.data))
+        self._last_received_value = self.decoder(bytes(event.data))
+        self._received = True
+        self._value = self._last_received_value
+
+    @property
+    def last_sent_value(self) -> Any:
+        return self._last_sent_value
+
+    @property
+    def last_received_value(self) -> Any:
+        return self._last_received_value
+
+    @property
+    def received(self) -> bool:
+        return self._received
 
     def set(self, value: Any, time_ms: int):
-        self._value = value
+        self._last_sent_value = value
         self.publish()
 
     def publish(self):
-        payload = self.encoder(self._value)
+        payload = self.encoder(self._last_sent_value)
         if self.publisher is None:
             raise RuntimeError("SIL Kit publisher has not been created")
         self.publisher.publish(payload)

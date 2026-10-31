@@ -11,8 +11,8 @@ This guide documents the methods implemented in `src/silkit_runner/scenario/scen
 | `scenario.when(condition)` | zero-argument callable returning bool | Wraps the **most recently registered action** in a guard. Returns `Scenario`. Raises `RuntimeError` without a preceding action. |
 | `scenario.expect(predicate, message=None)` | `SignalPredicate` | Checks the predicate on **each simulation step**, until the scenario ends or a check fails. |
 | `scenario.expect_eventually(predicate_factory, *, within_ms, message=None)` | factory returning `SignalPredicate` | Checks from the first simulation step; fails when the timeout expires. |
-| `scenario.invariant(predicate, message, *, severity="fail", start_ms=0, end_ms=None)` | bool callable, message, severity and time interval | Checks on every step in the inclusive time interval; `"fail"` raises, other severity values print warnings. |
-| `scenario.run()` | none | Starts and waits for the coordinated lifecycle, then raises a recorded assertion failure. |
+| `scenario.invariant(predicate, message, *, severity="fail", start_ms=0, end_ms=None)` | bool callable, message, severity and time interval | Checks on every step in the inclusive time interval; `"fail"` raises, `"warn"` emits Python logging warnings. |
+| `scenario.run(timeout_s=None)` | optional positive wall-clock timeout in seconds | Waits for the coordinated lifecycle; raises `TimeoutError` on timeout and propagates recorded assertion or execution failures. |
 
 **Chaining rule:** `at(...)` and `every(...)` return builder objects; their action methods return the **Scenario**, not the same builder. Therefore write `scenario.at(0).set(...).at(100).expect(...)`, or use separate statements; do **not** assume `scenario.at(0).set(...).pulse(...)` works.
 
@@ -43,9 +43,9 @@ A scheduled action is executed at the next eligible simulation step; the simulat
 
 | Method | Arguments | Behavior |
 | --- | --- | --- |
-| `.do(func, *args)` | callable and positional arguments | Calls `func(*args, time_ms=actual_step_ms)` whenever `(time_ms - start_ms) % period_ms == 0` within the interval. |
+| `.do(func, *args)` | callable and positional arguments | Calls `func(*args, time_ms=actual_step_ms)` at the next eligible simulation step when a scheduled deadline is due; missed deadlines are coalesced into one invocation. |
 | `.set(signal, value)` | signal and value | Publishes the same value on every eligible step. |
-| `.ramp(signal, start, end, step)` | signal and numeric ramp parameters | Sets the start value on the first eligible step, then adds `step` and clamps overshoot to `end`. |
+| `.ramp(signal, start, end, step, *, stop_at_target=False)` | signal and numeric ramp parameters | Sets the start value on the first eligible step, then adds `step` and clamps overshoot to `end`. |
 | `.modulate(signal, func)` | signal, `func(sim_time_ms)` | Evaluates the function on each eligible step and writes the result. |
 | `.control(measured_signal, output_signal, controller)` | measured signal, output signal, controller | Reads `measured_signal.get()`, calls `controller(measurement, time_ms)`, and writes the result with `output_signal.set(result, time_ms)`. |
 
@@ -62,7 +62,7 @@ scenario.every(10, start_ms=0, end_ms=100).control(
 )
 ```
 
-**Implementation details:** `end_ms` is applied by `.do()`, `.set()`, `.modulate()` and `.control()`. Currently `.ramp()` does **not** honor the builder's `end_ms`; after reaching its target, it continues writing the final value on subsequent eligible steps. Periodic execution requires exact alignment with the simulation steps. For example, with 10 ms simulation steps, a 7 ms period will not run on every requested 7 ms boundary.
+**Implementation details:** `end_ms` is applied by `.do()`, `.set()`, `.modulate()` and `.control()`. Currently `.ramp()` does **not** honor the builder's `end_ms`; after reaching its target, it continues writing the final value on subsequent eligible steps. Periodic execution does not require exact alignment with simulation steps. For example, with 10 ms simulation steps, a 7 ms period fires once per eligible simulation step rather than replaying every missed 7 ms deadline. Pass `stop_at_target=True` to remove a ramp after its final target value is emitted.
 
 ## Guards and assertions
 
@@ -127,9 +127,9 @@ Use `SignalGroup` with signals offering the required predicate method; note the 
 
 ## CAN-related scenario helpers
 
-`scenario.can_signal(signal: CanSignal)` registers a CAN signal with the scenario's frame dispatcher and returns the same signal. `scenario.get_can_controller(network)` retrieves a configured controller (or raises `KeyError` if it does not exist). A `CanSignal` is decoded from frames with the matching CAN ID and can be used in predicate-based expectations.
+`scenario.can_signal(signal: CanSignal, *, network: str | None = None)` registers a CAN signal with the scenario's frame dispatcher and returns the same signal. `scenario.get_can_controller(network)` retrieves a configured controller (or raises `KeyError` if it does not exist). A `CanSignal` is decoded from frames with the matching `(network, CAN ID)` pair and can be used in predicate-based expectations.
 
-For Pub/Sub-only scenarios, initialize with `can_networks=()`. For CAN examples, supply matching network names and register the CAN signals before running.
+With multiple configured CAN networks, `network` is required; for a single network it is inferred. For Pub/Sub-only scenarios, initialize with `can_networks=()`. For CAN examples, supply matching network names and register the CAN signals before running.
 
 ## Timing and limitations
 
@@ -139,3 +139,10 @@ For Pub/Sub-only scenarios, initialize with `can_networks=()`. For CAN examples,
 - `Scenario` uses a coordinated SIL Kit lifecycle; registry, system controller and peers are external dependencies.
 - The current implementation stores a single `_last_action` for `when()`; subsequent unrelated scheduling may change which action it guards.
 - The current `run()` starts the lifecycle using `asyncio.run()`, so it is intended to be called from synchronous test code, not inside an already running event loop.
+
+## Signal state, UDS, and lifecycle
+
+- `SilKitSignal.set(value, time_ms)` publishes without changing `get()`; inbound messages update `get()` and `last_received_value`. Inspect `last_sent_value` for the most recent transmitted value and `received` to distinguish an initial value from an actual inbound message.
+- `UdsDidSignal(..., decoder=callable)` decodes a DID payload using a custom callable. By default it interprets bytes as a little-endian unsigned integer. `last_nrc` tracks negative responses to service `0x22`; positive non-DID services are not parsed as DID responses. The UDS helpers do not implement ISO-TP.
+- `scenario.run(timeout_s=30)` bounds wall-clock lifecycle waiting and raises `TimeoutError` if exceeded. `scenario.close()` requests a stop, and `with Scenario(...) as scenario:` calls `close()` on exit.
+- Unexpected exceptions raised during a step are wrapped as `ScenarioExecutionError` (`RuntimeError`), while assertion failures remain `AssertionError`. Invariant warnings use Python logging and can be captured with pytest `caplog`.

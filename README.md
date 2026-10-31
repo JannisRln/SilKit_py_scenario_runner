@@ -119,7 +119,7 @@ SILKIT_REGISTRY_URI=silkit://localhost:8500 \
 python -m pytest -v examples/test_basic_scenario.py
 ```
 
-Without `SILKIT_RUN_INTEGRATION=1`, the example is skipped so it does not hang while waiting for an unavailable SIL Kit environment. `Scenario.run()` runs the configured lifecycle and blocks until it finishes.
+Without `SILKIT_RUN_INTEGRATION=1`, the example is skipped so it does not hang while waiting for an unavailable SIL Kit environment. `Scenario.run()` runs the configured lifecycle and blocks until it finishes. Pass `timeout_s=30` to limit wall-clock waiting; a timeout raises `TimeoutError` and requests lifecycle stop.
 
 ## Common configuration
 
@@ -138,7 +138,9 @@ scenario = Scenario(
 controller = scenario.get_can_controller("CAN 1")
 ```
 
-Use `can_networks=()` for Pub/Sub-only tests. Network names must match those used by your SIL Kit participants.
+Use `can_networks=()` for Pub/Sub-only tests. Network names must match those used by your SIL Kit participants. For multiple CAN networks, register received signals with `scenario.can_signal(signal, network="CAN 1")` to distinguish identical CAN identifiers on different buses. For a single configured network, the network is inferred automatically.
+
+Periodic scheduling coalesces missed intervals: if simulation steps do not land exactly on the requested period, the action executes once at the next available step (not once per missed interval).
 
 ### Custom signal encoding
 
@@ -158,13 +160,21 @@ signal = SilKitSignal(
 )
 ```
 
+### Signal transmission and reception
+
+`SilKitSignal.set(value, time_ms)` publishes the value but does not immediately change `get()`. The `get()` method returns the latest received value (or the initial value until a message arrives). Use `last_sent_value` for the most recently transmitted value, `last_received_value` for the most recently decoded inbound value, and `received` to check whether any message has arrived. The default encoder and decoder use signed little-endian 32-bit integers.
+
 ### UDS over CAN
 
-The package includes `UdsDidSignal` and UDS request/response helpers for basic DID scenarios. The helpers do **not** implement ISO-TP segmentation or full CAN FD transport; use a dedicated transport implementation when those features are required.
+The package includes `UdsDidSignal` and UDS request/response helpers for basic DID scenarios. `UdsDidSignal(name="rpm", did=0x1234, decoder=lambda payload: int.from_bytes(payload, "big"))` allows application-specific decoding. `last_nrc` stores the last negative response code for service `0x22` and resets to `None` after a matching positive DID response. Other positive services are not treated as DID responses. The helpers do **not** implement ISO-TP segmentation or full CAN FD transport; use a dedicated transport implementation when those features are required.
 
 ### ECU-specific initialization
 
 ECU-specific initialization belongs in your consuming test project. Use `Scenario(on_communication_ready=...)` for simple ready-time actions, or `async_communication_ready=True` together with `complete_communication_ready()` when an RPC handshake must finish before simulation starts. The package does not define or send a fixed ECU startup RPC.
+
+### Scenario cleanup and diagnostics
+
+Use `with Scenario(...) as scenario:` to request lifecycle stop when leaving the context, or call `scenario.close()` explicitly. This does not replace waiting for coordinated shutdown. Unexpected errors in a simulation step are reported as `ScenarioExecutionError` (a `RuntimeError`); assertion failures retain their `AssertionError` type. Invariant warnings are emitted through Python `logging`, not printed to stdout.
 
 ## Development and tests
 

@@ -279,10 +279,10 @@ def test_invariant_failures_are_rethrown_by_run(scenario):
         scenario.run()
 
 
-def test_invariant_warn_only_reports_without_stopping(scenario, capsys):
+def test_invariant_warn_only_reports_without_stopping(scenario, caplog):
     scenario.invariant(lambda: False, "warn message", severity="warn", start_ms=5, end_ms=10)
     tick(scenario, 0, 5, 10, 15)
-    output = capsys.readouterr().out
+    output = caplog.text
     assert "[t=5ms] Invariant violated: warn message" in output
     assert "[t=10ms] Invariant violated: warn message" in output
     assert "[t=0ms]" not in output
@@ -380,5 +380,29 @@ def test_unexpected_exception_in_step_stops_and_is_rethrown_by_run(scenario):
     scenario.at(10).do(lambda time_ms: broken())
     tick(scenario, 10)
     assert scenario.lifecycle.stopped == "Scenario error"
-    with pytest.raises(AssertionError, match=r"ValueError in scenario step at t=10ms: boom"):
+    with pytest.raises(RuntimeError, match=r"ValueError in scenario step at t=10ms: boom"):
         scenario.run()
+
+
+def test_periodic_action_coalesces_irregular_steps(scenario):
+    signal = Signal()
+    scenario.every(10).set(signal, 1)
+    tick(scenario, 0, 7, 14, 21, 28)
+    assert signal.writes == [(0, 1), (14, 1), (21, 1)]
+
+
+def test_can_registry_isolates_identical_ids_by_network():
+    runner = Scenario(can_networks=("A", "B"), end_ms=None)
+    a = runner.can_signal(CanSignal("a", 0x123, lambda data: data[0]), network="A")
+    b = runner.can_signal(CanSignal("b", 0x123, lambda data: data[0]), network="B")
+    runner.get_can_controller("A").receive(0x123, bytes([1]))
+    assert a.get() == 1
+    assert b.get() is None
+    runner.get_can_controller("B").receive(0x123, bytes([2]))
+    assert b.get() == 2
+
+
+def test_multibus_registration_requires_network():
+    runner = Scenario(can_networks=("A", "B"))
+    with pytest.raises(ValueError, match="Specify network"):
+        runner.can_signal(CanSignal("ambiguous", 0x123, lambda data: data[0]))

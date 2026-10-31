@@ -224,3 +224,35 @@ class UdsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImprovementTests(unittest.TestCase):
+    def test_tx_rx_are_distinct(self):
+        scenario = Scenario(can_networks=())
+        signal = SilKitSignal("sample", scenario.participant, "sample", initial=0)
+        signal.set(7, 0)
+        self.assertEqual(signal.last_sent_value, 7)
+        self.assertEqual(signal.get(), 0)
+        self.assertFalse(signal.received)
+        callback = scenario.participant.subscribers["Sub_sample"]
+        callback(None, type("Event", (), {"data": (9).to_bytes(4, "little", signed=True)})())
+        self.assertEqual(signal.last_received_value, 9)
+        self.assertEqual(signal.get(), 9)
+        self.assertTrue(signal.received)
+
+    def test_uds_non_did_and_decoder(self):
+        response = decode_uds_response(bytes([0x50, 0x03, 0x12]))
+        self.assertIsNone(response.did)
+        self.assertEqual(response.payload, bytes([0x03, 0x12]))
+        signal = UdsDidSignal(name="rpm", did=0x1234, decoder=lambda data: int.from_bytes(data, "big"))
+        signal.update(bytes([0x7f, 0x22, 0x31]), 1)
+        self.assertEqual(signal.last_nrc, 0x31)
+        signal.update(bytes([0x62, 0x12, 0x34, 0x01, 0x02]), 2)
+        self.assertEqual(signal.get(), 258)
+        self.assertIsNone(signal.last_nrc)
+
+    def test_timeout_validation_and_context_manager(self):
+        with Scenario(can_networks=()) as scenario:
+            with self.assertRaises(ValueError):
+                scenario.run(timeout_s=0)
+        self.assertEqual(scenario.lifecycle.stopped, "Scenario closed")

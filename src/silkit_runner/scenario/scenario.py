@@ -3,12 +3,24 @@ from typing import Callable, Optional, Any, Sequence
 from abc import ABC, abstractmethod
 import SilKit_py as SilKit
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class ScenarioExecutionError(RuntimeError):
+    """Raised when an unexpected error occurs during a simulation step."""
+
 
 from .scenario_signal import SignalPredicate
 from .can_signal import CanSignal, CanSignalRegistry
 
 
 class Action(ABC):
+    @property
+    def is_finished(self) -> bool:
+        return False
+
     @abstractmethod
     def execute(self, sim_time_ms: int) -> None:
         ...
@@ -19,6 +31,10 @@ class OneShotAction(Action):
     func: Callable
     args: tuple
     executed: bool = False
+
+    @property
+    def is_finished(self) -> bool:
+        return self.executed
 
     def execute(self, sim_time_ms: int) -> None:
         if not self.executed and sim_time_ms >= self.time_ms:
@@ -32,14 +48,25 @@ class PeriodicAction(Action):
     func: Callable
     args: tuple
     end_ms: Optional[int] = None
+    _next_due_ms: Optional[int] = None
+
+    @property
+    def is_finished(self) -> bool:
+        return self.end_ms is not None and self._next_due_ms is not None and self._next_due_ms > self.end_ms
 
     def execute(self, sim_time_ms: int) -> None:
-        if sim_time_ms < self.start_ms:
+        if self.period_ms <= 0:
+            raise ValueError("period_ms must be positive")
+        if self._next_due_ms is None:
+            self._next_due_ms = self.start_ms
+        if sim_time_ms < self._next_due_ms:
             return
         if self.end_ms is not None and sim_time_ms > self.end_ms:
+            self._next_due_ms = self.end_ms + 1
             return
-        if (sim_time_ms - self.start_ms) % self.period_ms == 0:
-            self.func(*self.args, time_ms=sim_time_ms)
+        # Coalesce missed periods: execute once at the current simulation step.
+        self._next_due_ms += ((sim_time_ms - self._next_due_ms) // self.period_ms + 1) * self.period_ms
+        self.func(*self.args, time_ms=sim_time_ms)
 
 @dataclass
 class PulseAction(Action):
@@ -50,6 +77,10 @@ class PulseAction(Action):
     reset_value: Any
     started: bool = False
     finished: bool = False
+
+    @property
+    def is_finished(self) -> bool:
+        return self.finished
 
     def execute(self, sim_time_ms: int) -> None:
         if not self.started and sim_time_ms >= self.start_ms:
@@ -70,12 +101,19 @@ class RampAction(Action):
     step: float
 
     _current: float|None = None
+    _next_due_ms: int | None = None
+    stop_at_target: bool = False
+    _finished: bool = False
+
+    @property
+    def is_finished(self) -> bool:
+        return self._finished
 
     def execute(self, sim_time_ms: int) -> None:
         if sim_time_ms < self.start_ms:
             return
 
-        if (sim_time_ms - self.start_ms) % self.period_ms != 0:
+        if self._finished or not _period_due(self, sim_time_ms):
             return
 
         if self._current is None:
@@ -88,6 +126,8 @@ class RampAction(Action):
             self._current = self.end_value
 
         self.set_func(self._current, time_ms=sim_time_ms)
+        if self.stop_at_target and self._current == self.end_value:
+            self._finished = True
 
 @dataclass
 class ModulationAction(Action):
@@ -96,13 +136,14 @@ class ModulationAction(Action):
     set_func: Callable
     func: Callable[[int], float]
     end_ms: Optional[int] = None
+    _next_due_ms: Optional[int] = None
 
     def execute(self, sim_time_ms: int) -> None:
         if sim_time_ms < self.start_ms:
             return
         if self.end_ms is not None and sim_time_ms > self.end_ms:
             return
-        if (sim_time_ms - self.start_ms) % self.period_ms != 0:
+        if not _period_due(self, sim_time_ms):
             return
 
         value = self.func(sim_time_ms)
@@ -116,13 +157,14 @@ class ClosedLoopAction(Action):
     set_func: Callable[[float, int], None]
     control_func: Callable[[float, int], float]
     end_ms: Optional[int] = None
+    _next_due_ms: Optional[int] = None
 
     def execute(self, sim_time_ms: int) -> None:
         if sim_time_ms < self.start_ms:
             return
         if self.end_ms is not None and sim_time_ms > self.end_ms:
             return
-        if (sim_time_ms - self.start_ms) % self.period_ms != 0:
+        if not _period_due(self, sim_time_ms):
             return
 
         measurement = self.read_func()
@@ -133,6 +175,10 @@ class ClosedLoopAction(Action):
 class GuardedAction(Action):
     inner: Action
     condition: Callable[[], bool]
+
+    @property
+    def is_finished(self) -> bool:
+        return self.inner.is_finished
 
     def execute(self, sim_time_ms: int) -> None:
         if self.condition():
@@ -155,6 +201,10 @@ class ExpectAtAction(Action):
     predicate: SignalPredicate
     message: str = "Expectation failed"
     executed: bool = False
+
+    @property
+    def is_finished(self) -> bool:
+        return self.executed
 
     def execute(self, sim_time_ms: int) -> None:
         if self.executed:
@@ -185,7 +235,7 @@ class InvariantAction(Action):
             if self.severity == "fail":
                 raise AssertionError(msg)
             else:
-                print("WARNING:", msg)
+                logger.warning("%s", msg)
 
 @dataclass
 class EventuallyAction(Action):
@@ -196,6 +246,10 @@ class EventuallyAction(Action):
     _start_ms: Optional[int] = None
     _satisfied: bool = False
     _predicate: Optional[SignalPredicate] = None
+
+    @property
+    def is_finished(self) -> bool:
+        return self._satisfied
 
     def execute(self, sim_time_ms: int) -> None:
         if self._satisfied:
@@ -219,6 +273,19 @@ class EventuallyAction(Action):
             raise AssertionError(
                 f"[t={sim_time_ms}ms] {self.message}: {self._predicate.description}"
             )
+
+def _period_due(action: Action, now_ms: int) -> bool:
+    """Coalesce missed periods into one execution at the current step."""
+    if action.period_ms <= 0:
+        raise ValueError("period_ms must be positive")
+    due = action._next_due_ms
+    if due is None:
+        due = action.start_ms
+    if now_ms < due:
+        return False
+    action._next_due_ms = due + ((now_ms - due) // action.period_ms + 1) * action.period_ms
+    return True
+
 
 class Scenario:
     """A generic SIL Kit participant with a simulated-time scenario scheduler.
@@ -267,9 +334,10 @@ class Scenario:
 
         self._end_ms = end_ms
         self._now_ms = 0
+        self._now_ns = 0
         self._actions: list[Action] = []
         self._last_action: Action | None = None
-        self._failure: AssertionError | None = None
+        self._failure: Exception | None = None
         self._on_ready = on_communication_ready
         self._async_ready = async_communication_ready
         self._can_registry = CanSignalRegistry(unhandled_policy="ignore")
@@ -277,16 +345,17 @@ class Scenario:
         cfg = SilKit.participant_configuration_from_String(configuration)
         self.participant = SilKit.create_participant(cfg, participant_name, uri)
 
-        def _on_can_frame(ctrl: Any, event: Any) -> None:
-            self._can_registry.dispatch(
-                event.frame.can_id, bytes(event.frame.data), self._now_ms
-            )
-
         self.can_controllers: dict[str, Any] = {}
         for idx, network in enumerate(can_networks, start=1):
             controller = self.participant.create_can_controller(
                 f"Scenario_CAN_Controller{idx}", network
             )
+            def _on_can_frame(ctrl: Any, event: Any, *, network_name: str = network) -> None:
+                self._can_registry.dispatch(
+                    event.frame.can_id, bytes(event.frame.data), self._now_ms,
+                    network=network_name,
+                )
+
             controller.add_frame_handler(_on_can_frame, 2)
             self.can_controllers[network] = controller
             # Preserve the old attribute for simple single-network users.
@@ -388,6 +457,7 @@ class Scenario:
         return self
 
     def step(self, now_ns: int, duration_ns: int) -> None:
+        self._now_ns = now_ns
         self._now_ms = now_ns // 1_000_000
 
         remaining = []
@@ -400,24 +470,12 @@ class Scenario:
                 return
             except Exception as error:
                 # SIL Kit swallows exceptions raised in the step handler, which would leave run() hanging.
-                self._failure = AssertionError(f"{type(error).__name__} in scenario step at t={self._now_ms}ms: {error}")
+                self._failure = ScenarioExecutionError(f"{type(error).__name__} in scenario step at t={self._now_ms}ms: {error}")
                 self._failure.__cause__ = error
                 self.lifecycle.stop("Scenario error")
                 return
 
-            finished = (
-                (isinstance(action, OneShotAction) and action.executed)
-                or (isinstance(action, ExpectAtAction) and action.executed)
-                or (isinstance(action, EventuallyAction) and action._satisfied)
-                or (
-                    isinstance(action, GuardedAction)
-                    and (
-                        (isinstance(action.inner, OneShotAction) and action.inner.executed)
-                        or (isinstance(action.inner, EventuallyAction) and action.inner._satisfied)
-                        or (isinstance(action.inner, ExpectAtAction) and action.inner.executed)
-                    )
-                )
-            )
+            finished = action.is_finished
             if not finished:
                 remaining.append(action)
         self._actions = remaining
@@ -432,13 +490,44 @@ class Scenario:
         if self._end_ms is not None and self._now_ms >= self._end_ms:
             self.lifecycle.stop("Simulation done")
 
-    def run(self):
-        asyncio.run(self.lifecycle.start_lifecycle()) # type: ignore
+    def run(self, *, timeout_s: float | None = None):
+        """Run the lifecycle, optionally bounding wall-clock execution time."""
+        if timeout_s is not None and timeout_s <= 0:
+            raise ValueError("timeout_s must be positive")
+
+        async def _run():
+            lifecycle = self.lifecycle.start_lifecycle()
+            if timeout_s is None:
+                await lifecycle
+            else:
+                await asyncio.wait_for(lifecycle, timeout=timeout_s)
+
+        try:
+            asyncio.run(_run())
+        except TimeoutError:
+            self.lifecycle.stop("Scenario timeout")
+            raise TimeoutError(f"Scenario lifecycle exceeded {timeout_s} seconds") from None
         if self._failure:
             raise self._failure
 
-    def can_signal(self, signal: CanSignal) -> CanSignal:
-        return self._can_registry.register(signal)
+    def close(self) -> None:
+        """Request a graceful lifecycle stop."""
+        self.lifecycle.stop("Scenario closed")
+
+    def __enter__(self) -> "Scenario":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def can_signal(self, signal: CanSignal, *, network: str | None = None) -> CanSignal:
+        if network is None and len(self.can_controllers) == 1:
+            network = next(iter(self.can_controllers))
+        if network is not None and network not in self.can_controllers:
+            raise ValueError(f"Unknown CAN network: {network}")
+        if network is None and len(self.can_controllers) > 1:
+            raise ValueError("Specify network when multiple CAN networks are configured")
+        return self._can_registry.register(signal, network=network)
 
 class _ScenarioAt:
     def __init__(self, scenario: Scenario, time_ms: int):
@@ -516,7 +605,7 @@ class _ScenarioEvery:
     def set(self, signal, value):
         return self.do(signal.set, value)
     
-    def ramp(self, signal, start, end, step):
+    def ramp(self, signal, start, end, step, *, stop_at_target: bool = False):
         action = RampAction(
             start_ms=self._start,
             period_ms=self._period,
@@ -524,6 +613,7 @@ class _ScenarioEvery:
             start_value=start,
             end_value=end,
             step=step,
+            stop_at_target=stop_at_target,
         )
         self._scenario._add_action(action)
         return self._scenario

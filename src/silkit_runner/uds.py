@@ -1,5 +1,6 @@
 import SilKit_py as SilKit
 from dataclasses import dataclass
+from typing import Callable, Any
 from .scenario.can_signal import CanSignal
 
 @dataclass(frozen=True)
@@ -37,9 +38,13 @@ def decode_uds_response(data: bytes) -> DecodedUdsResponse:
     did = None
     payload = b""
 
-    if len(data) >= 3:
+    if service in (0x22, 0x2E):
+        if len(data) < 3:
+            raise ValueError("Incomplete DID response")
         did = (data[1] << 8) | data[2]
         payload = data[3:]
+    else:
+        payload = data[1:]
 
     return DecodedUdsResponse(
         service=service,
@@ -93,6 +98,7 @@ class UdsDidSignal(CanSignal):
         did: int,
         req_can_id: int = 0x18DAF110,
         resp_can_id: int = 0x18DA10F1,
+        decoder: Callable[[bytes], Any] | None = None,
     ):
         super().__init__(
             name=name,
@@ -101,6 +107,8 @@ class UdsDidSignal(CanSignal):
         )
         self.did = did
         self.req_can_id = req_can_id
+        self.value_decoder = decoder or (lambda payload: int.from_bytes(payload, byteorder="little"))
+        self.last_nrc: int | None = None
 
     # -------- response handling (sticky) --------
 
@@ -108,12 +116,18 @@ class UdsDidSignal(CanSignal):
         r = decode_uds_response(data)
 
         if r.negative:
+            if r.service == 0x22:
+                self.last_nrc = r.nrc
+                self._last_time_ms = time_ms
             return
 
         if r.did != self.did:
             return
 
-        self._value = int.from_bytes(r.payload, byteorder="little")
+        if r.service != 0x22:
+            return
+        self.last_nrc = None
+        self._value = self.value_decoder(r.payload)
         self._last_time_ms = time_ms
 
     # -------- request API --------
