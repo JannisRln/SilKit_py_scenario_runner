@@ -18,6 +18,7 @@ class FakeMessage:
     name = "VehicleStatus"
     frame_id = 0x123
     is_extended_frame = False
+    cycle_time = 20
     signals = [FakeSignal("VehicleSpeed"), FakeSignal("EngineSpeed")]
 
     def encode(self, values):
@@ -141,3 +142,39 @@ def test_message_staging_does_not_transmit(tmp_path):
     assert scenario.get_can_controller("CAN 1").sent == []
     vehicle.VehicleStatus.send()
     assert len(scenario.get_can_controller("CAN 1").sent) == 1
+
+def test_message_periodic_send_buffers_signal_updates(tmp_path):
+    from silkit_runner import Scenario
+    scenario = Scenario(can_networks=("CAN 1",))
+    module_path = generate_dbc(tmp_path / "vehicle.dbc", tmp_path / "generated.py")
+    spec = importlib.util.spec_from_file_location("generated_vehicle", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    vehicle = scenario.dbc(module.Vehicle, network="CAN 1")
+    vehicle.VehicleStatus.EngineSpeed.set(800)
+    vehicle.VehicleStatus.VehicleSpeed.set(35)
+    vehicle.VehicleStatus.send_every()  # DBC GenMsgCycleTime = 20 ms
+    controller = scenario.get_can_controller("CAN 1")
+    scenario.step(0, 1_000_000)
+    assert controller.sent[-1]["data"] == bytes([70, 80])
+    scenario.at(10).set(vehicle.VehicleStatus.VehicleSpeed, 40)
+    scenario.step(10_000_000, 1_000_000)
+    assert len(controller.sent) == 1  # Updating a signal does not transmit.
+    scenario.step(20_000_000, 1_000_000)
+    assert len(controller.sent) == 2
+    assert controller.sent[-1]["data"] == bytes([80, 80])
+
+
+def test_message_send_once_and_invalid_cycle(tmp_path):
+    from silkit_runner import Scenario
+    scenario = Scenario(can_networks=("CAN 1",))
+    module_path = generate_dbc(tmp_path / "vehicle.dbc", tmp_path / "generated.py")
+    spec = importlib.util.spec_from_file_location("generated_vehicle", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    vehicle = scenario.dbc(module.Vehicle)
+    vehicle.VehicleStatus.VehicleSpeed.set(15)
+    vehicle.VehicleStatus.send_once()
+    assert scenario.get_can_controller("CAN 1").sent[-1]["data"] == bytes([30, 0])
+    with pytest.raises(ValueError, match="positive period"):
+        vehicle.VehicleStatus.send_every(0)
