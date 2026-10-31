@@ -15,3 +15,5 @@ troubleshooting
 ```
 
 For release and development instructions, see the [repository README](https://github.com/JannisRln/SilKit_py_scenario_runner#readme).
+
+- [Typed DBC signal generation and binding](dbc.md)
