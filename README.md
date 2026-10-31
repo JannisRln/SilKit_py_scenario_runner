@@ -140,6 +140,18 @@ scenario.at(500).expect(speed.greater_than(30))
 
 For message-oriented sending without signal-name strings, use `bind_dbc_vehicle(scenario, Vehicle, network="CAN 1")`, stage values with `vehicle.VehicleStatus.EngineSpeed.set(800)` and `vehicle.VehicleStatus.VehicleSpeed.set(35)`, then schedule `scenario.at(100).do(vehicle.VehicleStatus.send)`. Setting values does not transmit until `send()` is called.
 
+For typical cyclic CAN messages, prefer a message-oriented API:
+
+```python
+vehicle = scenario.dbc(Vehicle, network="CAN 1")
+vehicle.VehicleStatus.EngineSpeed.set(800)
+vehicle.VehicleStatus.VehicleSpeed.set(35)
+vehicle.VehicleStatus.send_every()  # Uses DBC GenMsgCycleTime
+scenario.at(100).set(vehicle.VehicleStatus.VehicleSpeed, 50)
+```
+
+Signal updates are buffered; the complete CAN frame is sent at the next scheduled cycle. Use `send_once()` for event-triggered transmission.
+
 The generated classes describe DBC messages and signals. `bind_dbc_signal(...)` creates a receive-side `CanSignal` with physical-value decoding; `bind_dbc_sender(...)` creates a transmitter usable with `scenario.at(...).set(...)` and `scenario.every(...).set(...)`. A sender encodes the complete DBC message, retaining other signal values between transmissions. See [typed DBC documentation](docs/dbc.md) for limitations and network compatibility.
 
 ## Common configuration
