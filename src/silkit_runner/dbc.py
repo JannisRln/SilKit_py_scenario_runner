@@ -113,6 +113,77 @@ def bind_dbc_signal(scenario: Any, definition: DbcSignalDefinition, *, network: 
         ) from exc
 
 
+
+class DbcSignalSender:
+    """Transmit one DBC signal while retaining other message signal values.
+
+    Values are physical units as understood by cantools. All non-target
+    signals must be initialized via `initial_values` or their DBC defaults.
+    """
+
+    def __init__(
+        self,
+        scenario: Any,
+        definition: DbcSignalDefinition,
+        *,
+        network: str | None = None,
+        initial_values: dict[str, Any] | None = None,
+    ) -> None:
+        import SilKit_py as SilKit
+
+        if network is None:
+            if len(scenario.can_controllers) != 1:
+                raise ValueError("Specify network when zero or multiple CAN networks are configured")
+            network = next(iter(scenario.can_controllers))
+        self.controller = scenario.get_can_controller(network)
+        database = _cantools().database.load_file(definition.dbc_path)
+        self.message = database.get_message_by_name(definition.message_name)
+        if self.message.frame_id != definition.frame_id:
+            raise ValueError("DBC message frame ID differs from generated definition")
+        names = {signal.name for signal in self.message.signals}
+        if definition.signal_name not in names:
+            raise ValueError(f"Unknown DBC signal: {definition.signal_name}")
+        self.definition = definition
+        self._flags = SilKit.CanFrameFlag.Ide if self.message.is_extended_frame else 0
+        self._values = {
+            signal.name: signal.initial if signal.initial is not None else 0
+            for signal in self.message.signals
+        }
+        if initial_values:
+            unknown = set(initial_values) - names
+            if unknown:
+                raise ValueError(f"Unknown initial DBC signals: {sorted(unknown)}")
+            self._values.update(initial_values)
+
+    def set(self, value: Any, *, time_ms: int = 0) -> None:
+        """Encode and send the complete CAN frame with the updated signal.
+
+        `time_ms` is accepted for compatibility with scenario scheduling;
+        SIL Kit determines the actual transmission timestamp.
+        """
+        next_values = {**self._values, self.definition.signal_name: value}
+        data = self.message.encode(next_values)
+        self.controller.send_frame(
+            can_id=self.message.frame_id,
+            data=data,
+            flags=self._flags,
+        )
+        self._values = next_values
+
+
+def bind_dbc_sender(
+    scenario: Any,
+    definition: DbcSignalDefinition,
+    *,
+    network: str | None = None,
+    initial_values: dict[str, Any] | None = None,
+) -> DbcSignalSender:
+    """Bind a generated signal definition for scheduled CAN transmission."""
+    return DbcSignalSender(
+        scenario, definition, network=network, initial_values=initial_values
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     """Command-line entry point for generating typed DBC definitions."""
     parser = argparse.ArgumentParser(description="Generate typed Python DBC signal definitions")
