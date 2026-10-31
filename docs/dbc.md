@@ -30,6 +30,26 @@ Signal attributes are derived from DBC message and signal names. Invalid identif
 
 The generated definitions embed the absolute DBC file path. Regenerate after moving or changing the DBC file. At runtime, binding checks the frame identifier and signal name against the DBC file and uses cantools to decode physical values, including scaling and byte order. For a scenario with exactly one CAN network, `network` may be omitted. For multiple networks, specify it explicitly.
 
+## Transmitting CAN signals
+
+Use `bind_dbc_sender` to create an object compatible with `scenario.at(...).set(...)` and `scenario.every(...).set(...)`:
+
+```python
+from silkit_runner.dbc import bind_dbc_sender
+from vehicle_signals import Vehicle
+
+speed_tx = bind_dbc_sender(
+    scenario,
+    Vehicle.VehicleStatus.VehicleSpeed,
+    network="CAN 1",
+    initial_values={"EngineSpeed": 800},
+)
+scenario.at(100).set(speed_tx, 35)
+scenario.every(20, end_ms=200).set(speed_tx, 40)
+```
+
+Each `set()` call encodes the **complete DBC message** and sends it through the selected SIL Kit CAN controller. Other signal values in the message are retained between sends. Initial values default to the DBC signal's `initial` value or zero; provide `initial_values` to initialize companion signals explicitly. Encoding and range validation are performed by cantools. A standard CAN frame uses flags `0`, while an extended frame uses `CanFrameFlag.Ide`. The sender does not implement cyclic transmission independently; schedule it using the scenario API. `time_ms` is for scheduler compatibility, not an explicit CAN timestamp.
+
 **Compatibility:** On the current main branch, the CAN registry does not yet distinguish networks. Binding a specific network requires the network-aware registry introduced in PR #2. Until that PR is merged, use this feature only with single-network scenarios. DBC generation itself works independently.
 
-This initial version supports receive-side signal decoding; it does not yet generate CAN transmit APIs, implement ISO-TP, or replace the SIL Kit lifecycle.
+This version supports receive-side decoding and transmit-side complete-message encoding. It does not implement ISO-TP or replace the SIL Kit lifecycle.
