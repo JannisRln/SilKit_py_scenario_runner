@@ -5,18 +5,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from silkit_runner.dbc import DbcSignalDefinition, bind_dbc_signal, generate_dbc
+from silkit_runner.dbc import DbcSignalDefinition, bind_dbc_signal, bind_dbc_sender, generate_dbc
 
 
 class FakeSignal:
     def __init__(self, name):
         self.name = name
+        self.initial = 0
 
 
 class FakeMessage:
     name = "VehicleStatus"
     frame_id = 0x123
+    is_extended_frame = False
     signals = [FakeSignal("VehicleSpeed"), FakeSignal("EngineSpeed")]
+
+    def encode(self, values):
+        return bytes([int(values["VehicleSpeed"] * 2), int(values["EngineSpeed"] / 10)])
 
     def decode(self, payload):
         return {"VehicleSpeed": payload[0] / 2, "EngineSpeed": payload[1] * 10}
@@ -76,3 +81,32 @@ def test_rejects_stale_frame_id(tmp_path):
     definition = DbcSignalDefinition(str(tmp_path / "vehicle.dbc"), "VehicleStatus", "VehicleSpeed", 0x999)
     with pytest.raises(ValueError, match="frame ID"):
         bind_dbc_signal(SimpleNamespace(can_controllers={"CAN 1": object()}), definition)
+
+def test_send_dbc_signal_preserves_other_values(tmp_path):
+    from silkit_runner import Scenario
+    scenario = Scenario(can_networks=("CAN 1",))
+    definition = DbcSignalDefinition(str(tmp_path / "vehicle.dbc"), "VehicleStatus", "VehicleSpeed", 0x123)
+    sender = bind_dbc_sender(scenario, definition, initial_values={"EngineSpeed": 200})
+    scenario.at(5).set(sender, 30)
+    scenario.step(5_000_000, 1_000_000)
+    assert scenario.get_can_controller("CAN 1").sent == [
+        {"can_id": 0x123, "data": bytes([60, 20]), "flags": 0}
+    ]
+    sender.set(40)
+    assert scenario.get_can_controller("CAN 1").sent[-1]["data"] == bytes([80, 20])
+
+
+def test_send_dbc_signal_rejects_unknown_initial_signal(tmp_path):
+    from silkit_runner import Scenario
+    scenario = Scenario(can_networks=("CAN 1",))
+    definition = DbcSignalDefinition(str(tmp_path / "vehicle.dbc"), "VehicleStatus", "VehicleSpeed", 0x123)
+    with pytest.raises(ValueError, match="Unknown initial"):
+        bind_dbc_sender(scenario, definition, initial_values={"Missing": 5})
+
+
+def test_send_dbc_signal_requires_network_when_ambiguous(tmp_path):
+    from silkit_runner import Scenario
+    scenario = Scenario(can_networks=("CAN 1", "CAN 2"))
+    definition = DbcSignalDefinition(str(tmp_path / "vehicle.dbc"), "VehicleStatus", "VehicleSpeed", 0x123)
+    with pytest.raises(ValueError, match="Specify network"):
+        bind_dbc_sender(scenario, definition)
