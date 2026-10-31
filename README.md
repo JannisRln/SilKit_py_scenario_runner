@@ -138,6 +138,8 @@ speed = bind_dbc_signal(scenario, Vehicle.VehicleStatus.VehicleSpeed, network="C
 scenario.at(500).expect(speed.greater_than(30))
 ```
 
+For message-oriented sending without signal-name strings, use `bind_dbc_vehicle(scenario, Vehicle, network="CAN 1")`, stage values with `vehicle.VehicleStatus.EngineSpeed.set(800)` and `vehicle.VehicleStatus.VehicleSpeed.set(35)`, then schedule `scenario.at(100).do(vehicle.VehicleStatus.send)`. Setting values does not transmit until `send()` is called.
+
 The generated classes describe DBC messages and signals. `bind_dbc_signal(...)` creates a receive-side `CanSignal` with physical-value decoding; `bind_dbc_sender(...)` creates a transmitter usable with `scenario.at(...).set(...)` and `scenario.every(...).set(...)`. A sender encodes the complete DBC message, retaining other signal values between transmissions. See [typed DBC documentation](docs/dbc.md) for limitations and network compatibility.
 
 ## Common configuration
