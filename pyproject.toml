@@ -29,4 +29,5 @@ Repository = "https://github.com/JannisRln/SilKit_py_scenario_runner"
 Issues = "https://github.com/JannisRln/SilKit_py_scenario_runner/issues"
 
 [project.optional-dependencies]
+dbc = ["cantools>=39,<42"]
 test = ["pytest>=8"]

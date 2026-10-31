@@ -121,6 +121,27 @@ python -m pytest -v examples/test_basic_scenario.py
 
 Without `SILKIT_RUN_INTEGRATION=1`, the example is skipped so it does not hang while waiting for an unavailable SIL Kit environment. `Scenario.run()` runs the configured lifecycle and blocks until it finishes. Pass `timeout_s=30` to limit wall-clock waiting; a timeout raises `TimeoutError` and requests lifecycle stop.
 
+## Typed DBC signals (optional)
+
+Generate Python definitions with IDE autocomplete instead of using signal-name strings:
+
+```bash
+python -m pip install "SilKit_py_scenario_runner[dbc]"
+python -m silkit_runner.dbc generate vehicle.dbc --output vehicle_signals.py
+```
+
+```python
+from vehicle_signals import Vehicle
+from silkit_runner.dbc import bind_dbc_signal
+
+speed = bind_dbc_signal(scenario, Vehicle.VehicleStatus.VehicleSpeed, network="CAN 1")
+scenario.at(500).expect(speed.greater_than(30))
+```
+
+For message-oriented sending without signal-name strings, use `bind_dbc_vehicle(scenario, Vehicle, network="CAN 1")`, stage values with `vehicle.VehicleStatus.EngineSpeed.set(800)` and `vehicle.VehicleStatus.VehicleSpeed.set(35)`, then schedule `scenario.at(100).do(vehicle.VehicleStatus.send)`. Setting values does not transmit until `send()` is called.
+
+The generated classes describe DBC messages and signals. `bind_dbc_signal(...)` creates a receive-side `CanSignal` with physical-value decoding; `bind_dbc_sender(...)` creates a transmitter usable with `scenario.at(...).set(...)` and `scenario.every(...).set(...)`. A sender encodes the complete DBC message, retaining other signal values between transmissions. See [typed DBC documentation](docs/dbc.md) for limitations and network compatibility.
+
 ## Common configuration
 
 ### CAN networks
