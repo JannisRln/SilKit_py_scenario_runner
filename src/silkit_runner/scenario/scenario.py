@@ -437,6 +437,11 @@ class Scenario:
         if self._failure:
             raise self._failure
 
+    def dbc(self, definitions: type, *, network: str | None = None):
+        """Bind generated DBC definitions as buffered CAN messages."""
+        from ..dbc import bind_dbc
+        return bind_dbc(self, definitions, network=network)
+
     def can_signal(self, signal: CanSignal) -> CanSignal:
         return self._can_registry.register(signal)
 
