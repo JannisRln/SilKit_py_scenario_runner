@@ -258,6 +258,85 @@ def bind_dbc_vehicle(scenario: Any, vehicle: type, *, network: str | None = None
     return DbcVehicle(scenario, vehicle, network=network)
 
 
+
+class DbcBoundSignal:
+    """A writable signal value within a periodically transmitted CAN message."""
+
+    def __init__(self, message: "DbcBoundMessage", name: str):
+        self._message = message
+        self.name = name
+
+    def set(self, value: Any, *, time_ms: int = 0) -> None:
+        """Update the signal value without transmitting a CAN frame."""
+        self._message.set_signal(self.name, value)
+
+
+class DbcBoundMessage:
+    """A CAN message with buffered signal values and explicit send scheduling."""
+
+    def __init__(self, scenario: Any, definition: DbcSignalDefinition, network: str):
+        import SilKit_py as SilKit
+
+        self._scenario = scenario
+        self._controller = scenario.get_can_controller(network)
+        database = _cantools().database.load_file(definition.dbc_path)
+        self._message = database.get_message_by_name(definition.message_name)
+        self._flags = SilKit.CanFrameFlag.Ide if self._message.is_extended_frame else 0
+        self._values = {
+            signal.name: signal.initial if signal.initial is not None else 0
+            for signal in self._message.signals
+        }
+        for signal in self._message.signals:
+            setattr(self, _identifier(signal.name), DbcBoundSignal(self, signal.name))
+
+    def set_signal(self, name: str, value: Any) -> None:
+        """Buffer a physical signal value for the next transmission."""
+        if name not in self._values:
+            raise ValueError(f"Unknown DBC signal: {name}")
+        self._values[name] = value
+
+    def send_once(self, *, time_ms: int = 0) -> None:
+        """Encode all buffered signals and send exactly one CAN frame."""
+        data = self._message.encode(self._values)
+        self._controller.send_frame(
+            can_id=self._message.frame_id, data=data, flags=self._flags
+        )
+
+    def send_every(
+        self, period_ms: int | None = None, *, start_ms: int = 0,
+        end_ms: int | None = None
+    ) -> None:
+        """Schedule periodic transmission; optionally use DBC GenMsgCycleTime."""
+        if period_ms is None:
+            period_ms = self._message.cycle_time
+        if period_ms is None or period_ms <= 0:
+            raise ValueError("A positive period or DBC GenMsgCycleTime is required")
+        self._scenario.every(period_ms, start_ms=start_ms, end_ms=end_ms).do(self.send_once)
+
+
+def bind_dbc(scenario: Any, definitions: type, *, network: str | None = None) -> Any:
+    """Build a message-oriented DBC namespace from generated definitions."""
+    from types import SimpleNamespace
+
+    if network is None:
+        if len(scenario.can_controllers) != 1:
+            raise ValueError("Specify network when zero or multiple CAN networks are configured")
+        network = next(iter(scenario.can_controllers))
+    if network not in scenario.can_controllers:
+        raise ValueError(f"Unknown CAN network: {network}")
+    messages = {}
+    for name, message_type in vars(definitions).items():
+        if name.startswith("_") or not isinstance(message_type, type):
+            continue
+        definitions_in_message = [
+            value for value in vars(message_type).values()
+            if isinstance(value, DbcSignalDefinition)
+        ]
+        if definitions_in_message:
+            messages[name] = DbcBoundMessage(scenario, definitions_in_message[0], network)
+    return SimpleNamespace(**messages)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Command-line entry point for generating typed DBC definitions."""
     parser = argparse.ArgumentParser(description="Generate typed Python DBC signal definitions")
