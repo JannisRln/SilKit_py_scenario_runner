@@ -121,6 +121,25 @@ python -m pytest -v examples/test_basic_scenario.py
 
 Without `SILKIT_RUN_INTEGRATION=1`, the example is skipped so it does not hang while waiting for an unavailable SIL Kit environment. `Scenario.run()` runs the configured lifecycle and blocks until it finishes.
 
+## Typed DBC signals (optional)
+
+Generate Python definitions with IDE autocomplete instead of using signal-name strings:
+
+```bash
+python -m pip install "SilKit_py_scenario_runner[dbc]"
+python -m silkit_runner.dbc generate vehicle.dbc --output vehicle_signals.py
+```
+
+```python
+from vehicle_signals import Vehicle
+from silkit_runner.dbc import bind_dbc_signal
+
+speed = bind_dbc_signal(scenario, Vehicle.VehicleStatus.VehicleSpeed, network="CAN 1")
+scenario.at(500).expect(speed.greater_than(30))
+```
+
+The generated classes describe DBC messages and signals; binding creates a live receive-side `CanSignal` with cantools physical-value decoding. See [typed DBC documentation](docs/dbc.md) for limitations and network compatibility.
+
 ## Common configuration
 
 ### CAN networks
