@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from silkit_runner.dbc import DbcSignalDefinition, bind_dbc_signal, bind_dbc_sender, generate_dbc
+from silkit_runner.dbc import DbcSignalDefinition, bind_dbc_signal, bind_dbc_sender, bind_dbc_vehicle, generate_dbc
 
 
 class FakeSignal:
@@ -110,3 +110,34 @@ def test_send_dbc_signal_requires_network_when_ambiguous(tmp_path):
     definition = DbcSignalDefinition(str(tmp_path / "vehicle.dbc"), "VehicleStatus", "VehicleSpeed", 0x123)
     with pytest.raises(ValueError, match="Specify network"):
         bind_dbc_sender(scenario, definition)
+
+def test_message_oriented_send_without_signal_strings(tmp_path):
+    from silkit_runner import Scenario
+    scenario = Scenario(can_networks=("CAN 1",))
+    generated = generate_dbc(tmp_path / "vehicle.dbc", tmp_path / "vehicle_signals.py")
+    spec = importlib.util.spec_from_file_location("vehicle_signals", generated)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    vehicle = bind_dbc_vehicle(scenario, module.Vehicle, network="CAN 1")
+    vehicle.VehicleStatus.EngineSpeed.set(800)
+    vehicle.VehicleStatus.VehicleSpeed.set(35)
+    assert vehicle.VehicleStatus.VehicleSpeed.get() == 35
+    scenario.at(100).do(vehicle.VehicleStatus.send)
+    scenario.step(100_000_000, 1_000_000)
+    assert scenario.get_can_controller("CAN 1").sent == [
+        {"can_id": 0x123, "data": bytes([70, 80]), "flags": 0}
+    ]
+
+
+def test_message_staging_does_not_transmit(tmp_path):
+    from silkit_runner import Scenario
+    scenario = Scenario(can_networks=("CAN 1",))
+    generated = generate_dbc(tmp_path / "vehicle.dbc", tmp_path / "vehicle_signals.py")
+    spec = importlib.util.spec_from_file_location("vehicle_signals", generated)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    vehicle = bind_dbc_vehicle(scenario, module.Vehicle)
+    vehicle.VehicleStatus.VehicleSpeed.set(20)
+    assert scenario.get_can_controller("CAN 1").sent == []
+    vehicle.VehicleStatus.send()
+    assert len(scenario.get_can_controller("CAN 1").sent) == 1
