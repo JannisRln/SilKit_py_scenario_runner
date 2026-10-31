@@ -138,7 +138,7 @@ speed = bind_dbc_signal(scenario, Vehicle.VehicleStatus.VehicleSpeed, network="C
 scenario.at(500).expect(speed.greater_than(30))
 ```
 
-The generated classes describe DBC messages and signals; binding creates a live receive-side `CanSignal` with cantools physical-value decoding. See [typed DBC documentation](docs/dbc.md) for limitations and network compatibility.
+The generated classes describe DBC messages and signals. `bind_dbc_signal(...)` creates a receive-side `CanSignal` with physical-value decoding; `bind_dbc_sender(...)` creates a transmitter usable with `scenario.at(...).set(...)` and `scenario.every(...).set(...)`. A sender encodes the complete DBC message, retaining other signal values between transmissions. See [typed DBC documentation](docs/dbc.md) for limitations and network compatibility.
 
 ## Common configuration
 
